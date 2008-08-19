@@ -47,12 +47,12 @@ MSB:
         my $end = $start + $len{$op}-1;
 
         # Special fiddle to allow room for EX AF,AF' before BRA
-    $start-- if $op == 0x80;
+        $start-- if $op == 0x80;
 
         # Check against what we've already positioned
         foreach (keys %off)
         {
-          # Determine extent of existing item
+            # Determine extent of existing item
             my $start2 = $off{$_};
             my $end2 = $start2 + $len{$_}-1;
 
@@ -83,7 +83,7 @@ print "Size = $size, used = $used, slack = ", $size-$used, "\n";
 foreach (sort { $a <=> $b } @todo)
 {
     my $offset = $base + $off{$_};
-  printf FILE "op_%02x:         equ  &%04x ; +$len{$_}\n", $_, $base+$off{$_};
+    printf FILE "op_%02x:         equ  &%04x ; +$len{$_}\n", $_, $base+$off{$_};
 }
 
 close FILE;
