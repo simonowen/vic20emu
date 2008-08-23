@@ -1,12 +1,12 @@
-; VIC-20 emulator for SAM Coupe, by Simon Owen
+; VIC-20 emulator for SAM Coupe and ZX Spectrum, by Simon Owen
 ;
-; Version 1.0 (19/8/2008)
+; Version 1.1 (23/8/2008)
 ;
 ; WWW: http://simonowen.com/sam/vic20emu/
 
 base:          equ  &a000
 
-spectrum_mode: equ  0
+spectrum_mode: equ  0               ; 0=SAM, 1=Spectrum
 
 status:        equ  &f9             ; Status and extended keyboard port
 lmpr:          equ  &fa             ; Low Memory Page Register
@@ -14,9 +14,11 @@ hmpr:          equ  &fb             ; High Memory Page Register
 vmpr:          equ  &fc             ; Video Memory Page Register
 keyboard:      equ  &fe             ; Keyboard port
 border:        equ  &fe             ; Border port
-saa:           equ  &01ff           ; SAA 1099 (register select)
-rom0_off:      equ  %00100000       ; LMPR bit to disable ROM0
+saa_reg:       equ  &01ff           ; SAA 1099 (register select)
+ay_reg:        equ  &fffd           ; AY-3-8912 (register select)
+kempston:      equ  &1f             ; Kempston joystick (Spectrum)
 
+rom0_off:      equ  %00100000       ; LMPR bit to disable ROM0
 vmpr_mode1:    equ  %00000000       ; Mode 1
 vmpr_mode2:    equ  %00100000       ; Mode 2
 
@@ -55,12 +57,12 @@ ELSE
 ENDIF
                out  (vmpr),a
 
-IF spectrum_mode
-               jr   $               ; stop to allow memory exporting
-ELSE
                ld   hl,vic_palette+&0f
                ld   bc,&10f8
                otdr
+
+IF spectrum_mode
+;              jr   $               ; stop to allow memory exporting
 ENDIF
                ld   (old_stack+1),sp
                ld   sp,stack_top
@@ -69,7 +71,7 @@ ENDIF
                call setup_im2       ; enable IM 2
                call init_sound
 
-reset_loop:    ei
+               ei
                call load_state
                call execute_loop    ; GO!
                call save_state
@@ -85,7 +87,11 @@ old_stack:     ld   sp,0
                ei
                ret
 
+IF spectrum_mode
+vic_palette:   defb 0,17,34,51,68,85,102,120,0,17,34,59,68,93,110,127
+ELSE
 vic_palette:   defb 0,127,32,87,49,70,24,104,36,98,47,95,63,101,31,111
+ENDIF
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -119,6 +125,42 @@ no_int:        pop  hl
                reti
 
 
+               ; key presses are slow to process, to speed up checking which is pressed
+key_press:     push de
+               ld   h,a     ; save the row state
+               push hl
+               ld   a,l     ; row number
+               add  a,a
+               add  a,a
+               add  a,a     ; *8
+               add  a,c     ; add column offset (*2)
+               add  a,a     ; *16
+               add  a,keymap\256
+               ld   l,a
+
+               ld   a,&7f   ; B N M Sym Space
+               in   a,(keyboard)
+               bit  1,a
+               jr   nz,not_sym_map
+               set  7,l     ; sym keymap in upper 128 bytes
+not_sym_map:
+               ld   h,keymap/256
+               ld   d,vic_key_rows/256
+               ld   e,(hl)  ; VIC row offset
+               bit  7,e     ; shift toggle?
+               jr   z,not_shift_tog
+               ld   a,(vic_key_rows+4)
+               xor  %00000010   ; toggle shift
+               ld   (vic_key_rows+4),a
+               res  7,e
+not_shift_tog: inc  l
+               ld   a,(de)
+               and  (hl)
+               ld   (de),a
+               pop  hl
+               ld   a,h
+               ret
+
 key_b0:        ld   de,key_b0_ret
                ld   c,7
                jp   key_press
@@ -143,28 +185,8 @@ key_b6:        ld   de,key_b6_ret
                jp   key_press
 key_b7:        ld   de,key_b7_ret
                ld   c,0
+               jp   key_press
 ENDIF
-key_press:     push de
-               ld   h,a     ; save the row state
-               push hl
-               ld   a,l     ; row number
-               add  a,a
-               add  a,a
-               add  a,a     ; *8
-               add  a,c     ; add column offset (*2)
-               add  a,a     ; *16
-               add  a,keymap\256
-               ld   l,a
-               ld   h,keymap/256
-               ld   d,h
-               ld   e,(hl)  ; VIC row offset
-               inc  l
-               ld   a,(de)
-               and  (hl)
-               ld   (de),a
-               pop  hl
-               ld   a,h
-               ret
 
 read_keyboard: ld   hl,vic_key_rows+7
                ld   a,&ff
@@ -181,14 +203,14 @@ read_keyboard: ld   hl,vic_key_rows+7
                ld   (hl),a
                dec  l
                ld   (hl),a
-               dec  l
-               ld   (hl),a          ; HL now vic_key_rows
+               dec  l           ; L is now zero for below
+               ld   (hl),a
 
                ld   b,&fe
 keyrow_loop:
 IF spectrum_mode == 0
                ld   c,status
-               in   a,(c)
+               in   a,(c)       ; read extended SAM keys
                rla
                jr   nc,key_b7
 key_b7_ret:    rla
@@ -214,42 +236,61 @@ key_b4_ret:    inc  l
 
                ld   h,vic_key_rows/256
 
-IF spectrum_mode == 0
-               ld   a,&fe
+               ld   a,&fe   ; V C X Z Shift
                in   a,(keyboard)
                rra
                jr   c,not_shift
 
-               ld   a,&ef
+IF spectrum_mode == 0
+               ld   a,&ef   ; DEL + -
                in   a,(status)
-               bit  6,a
-               jr   nz,not_shift_plus
+               rla
+               rla
+               jr   c,not_shift_plus
                ld   l,R4
                set  1,(hl)  ; release shift
                ld   l,R7
                set  5,(hl)  ; release +
                dec  l
                res  6,(hl)  ; press *
-
-not_shift_plus:bit  5,a
-               jr   nz,not_shift_minus
+not_shift_plus:
+               rla
+               jr   c,not_shift_minus
                ld   l,R0
                set  5,(hl)  ; release -
                ld   l,R4
                set  1,(hl)  ; release shift
                res  6,(hl)  ; press /
-ENDIF
 not_shift_minus:
-               ld   a,&ef
+               ld   a,&df
+               in   a,(status)
+               bit  5,a
+               jr   nz,not_shift_equals
+               ld   l,R2
+               set  6,(hl)  ; release =
+               ld   l,R6
+               res  6,(hl)  ; press * (_)
+not_shift_equals:
+ENDIF
+               ld   a,&ef   ; 6 7 8 9 0
                in   a,(keyboard)
                rra
                jr   c,not_shift_0
                ld   l,R0
                set  4,(hl)  ; release 0
+IF spectrum_mode
+               ld   l,R4
+               set  1,(hl)  ; release shift
+               ld   l,R7
+               res  7,(hl)  ; press Del
+ELSE
                inc  l
                res  6,(hl)  ; press ^ (~ = PI)
+ENDIF
 not_shift_0:
-               ld   a,&f7
+
+IF spectrum_mode == 0
+               ld   a,&f7   ; 5 4 3 2 1
                in   a,(keyboard)
                bit  1,a
                jr   nz,not_shift_2
@@ -260,111 +301,9 @@ not_shift_0:
                inc  l
                res  5,(hl)  ; press @
 not_shift_2:
-not_shift:
-               ld   a,&7f
-               in   a,(keyboard)
-               bit  1,a
-               jp   nz,not_sym
-
-               ld   a,&fb
-               in   a,(keyboard)
-               rra
-               jr   c,not_sym_w
-               ld   l,R1
-               set  0,(hl)  ; release Q
-               ld   l,R4
-               res  1,(hl)  ; press shift
-               res  5,(hl)  ; press ,
-
-not_sym_w:     rra
-               jr   c,not_sym_q
-               ld   l,R6
-               set  1,(hl)  ; release W
-               ld   l,R4
-               res  1,(hl)  ; press shift
-               dec  l
-               res  5,(hl)  ; press .
-not_sym_q:
-               rra
-               rra
-               jr   c,not_sym_r
-               ld   l,R6
-               set  2,(hl)  ; release R
-               ld   l,R4
-               res  1,(hl)  ; press shift
-               ld   l,R2
-               res  5,(hl)  ; press :
-
-not_sym_r:     rra
-               jr   c,not_sym_t
-               ld   l,R1
-               set  2,(hl)  ; release R
-               ld   l,R4
-               res  1,(hl)  ; press shift
-               inc  l
-               res  6,(hl)  ; press ;
-
-not_sym_t:     ld   a,&fd
-               in   a,(keyboard)
-               bit  3,a
-               jr   nz,not_sym_f
-               ld   l,R2
-               set  2,(hl)  ; release F
-
-not_sym_f:     bit  4,a
-               jr   nz,not_sym_g
-               ld   l,R5
-               set  3,(hl)  ; release G
-not_sym_g:
-               ld   a,&fe
-               in   a,(keyboard)
-               bit  2,a
-               jr   nz,not_sym_x
-               ld   l,R4
-               set  2,(hl)  ; release X
-               res  1,(hl)  ; press shift
-               res  6,(hl)  ; press /
-not_sym_x:
-               ld   a,&bf
-               in   a,(keyboard)
-               bit  1,a
-               jr   nz,not_sym_l
-               ld   l,R5
-               set  5,(hl)  ; release L
-               ld   l,R7
-               res  6,(hl)  ; press £
-not_sym_l:
-               bit  4,a
-               jr   nz,not_sym_h
-               ld   l,R2
-               set  3,(hl)  ; release H
-               dec  l
-               res  6,(hl)  ; press ^
-not_sym_h:
-not_sym:
-IF spectrum_mode == 0
-               ld   a,&df
-               in   a,(status)
-               bit  6,a
-               jr   nz,not_quotes
-               ld   l,R4
-               res  1,(hl)  ; press shift (2 pressed by keymap)
-not_quotes:
-               ld   a,&fd
-               in   a,(status)
-               bit  5,a
-               jr   nz,not_f4
-               ld   l,R4
-               res  1,(hl)  ; press shift
-not_f4:
-               ld   a,&fb
-               in   a,(status)
-               bit  6,a
-               jr   nz,not_f8
-               ld   l,R4
-               res  1,(hl)  ; press shift
-not_f8:
 ENDIF
+
+not_shift:
                ld   a,(&911e)       ; Interrupt Enable Register
                rla                  ; check CA1
                ret  nc              ; return if disabled
@@ -387,14 +326,26 @@ read_joystick: ld   hl,&911f
                ld   a,&ff
                ld   (hl),a          ; nothing pressed
 IF spectrum_mode
-               ld   a,&7f
-               in   a,(keyboard)
+               in   a,(kempston)    ; Kempston joystick
                rra
                rra
-               jr   nc,joy_b0
+               jr   c,joy_b1
+joy_b1_ret:    rra
+               jr   c,joy_b2
+joy_b2_ret:    rra
+               jr   c,joy_b3
+joy_b3_ret:    rra
+               ret  nc
+joy_b4:        res  5,(hl)          ; fire
                ret
-ENDIF
-               in   a,(keyboard)
+joy_b3:        res  2,(hl)          ; up
+               jp   joy_b3_ret
+joy_b2:        res  3,(hl)          ; down
+               jp   joy_b2_ret
+joy_b1:        res  4,(hl)          ; left
+               jp   joy_b1_ret
+ELSE
+               in   a,(keyboard)    ; &FFFE (cursor keys)
                rra
                jr   nc,joy_b0
 joy_b0_ret:    rra
@@ -411,6 +362,7 @@ joy_b1:        res  2,(hl)          ; up
                jp   joy_b1_ret
 joy_b0:        res  5,(hl)          ; fire
                jp   joy_b0_ret
+ENDIF
 
 
 ; IM 2 table must be aligned to 256-byte boundary
@@ -426,8 +378,44 @@ im2_jp:        jp   im2_handler
 ; Key tables must be in the same 256-byte page
                defs -$\256
 
-vic_key_rows:  defs 8
+; Normal key map (no modifiers)
+keymap:
+    defb    R2,&7f, R4,&7f, R3,&7f,  R4,&f7, R3,&fb, R4,&fb, R3,&fd, R4,&fd  ; F3 F2 F1  V C X Z Shift
+    defb    R5,&7f, R1,&7f, S5,&7f,  R5,&f7, R2,&fb, R5,&fb, R2,&fd, R5,&fd  ; F6 F5 F4  G F D S A
+    defb    R0,&bf, S4,&7f, R0,&7f,  R1,&fb, R6,&fb, R1,&fd, R6,&fd, R1,&fe  ; F9 F8 F7  T R E W Q
+    defb    RX,&ff, R5,&fe, R4,&fe,  R7,&fb, R0,&fd, R7,&fd, R0,&fe, R7,&fe  ; Caps Tab Esc  5 4 3 2 1
+    defb    R7,&7f, R7,&df, R0,&df,  R0,&fb, R7,&f7, R0,&f7, R7,&ef, R0,&ef  ; DEL + -  6 7 8 9 0
+    defb    RX,&ff, S0,&fe, R2,&bf,  R6,&f7, R1,&f7, R6,&ef, R1,&ef, R6,&df  ; F0 " =  Y U I O P
+    defb    R3,&bf, R2,&df, R5,&bf,  R2,&f7, R5,&ef, R2,&ef, R5,&df, R6,&7f  ; Edit : ;  H J K L Return
+    defb    R2,&fe, R3,&df, R4,&df,  R3,&f7, R4,&ef, R3,&ef, RX,&ff, R3,&fe  ; Inv . ,  B N M Sym Space
 
+; Key map with Symbol pressed
+IF spectrum_mode
+symmap:
+    defb    RX,&ff, RX,&ff, RX,&ff,  R4,&bf, S4,&bf, R7,&bf, R2,&df, R4,&fd  ; - - -  V C X Z Shift
+    defb    RX,&ff, RX,&ff, RX,&ff,  RX,&ff, RX,&ff, RX,&ff, R0,&df, S1,&bf  ; - - -  G F D S A
+    defb    RX,&ff, RX,&ff, RX,&ff,  S3,&df, S4,&df, RX,&ff, RX,&ff, RX,&ff  ; - - -  T R E W Q
+    defb    RX,&ff, RX,&ff, RX,&ff,  S7,&fb, S0,&fd, S7,&fd, R1,&df, S7,&fe  ; - - -  5 4 3 2 1
+    defb    RX,&ff, RX,&ff, RX,&ff,  S0,&fb, S7,&f7, S0,&f7, S7,&ef, S6,&bf  ; - - -  6 7 8 9 0
+    defb    RX,&ff, RX,&ff, RX,&ff,  S2,&df, S5,&bf, RX,&ff, R5,&bf, S0,&fe  ; - - -  Y U I O P
+    defb    RX,&ff, RX,&ff, RX,&ff,  R1,&bf, R0,&df, R7,&df, R2,&bf, R2,&fe  ; - - -  H J K L Return
+    defb    RX,&ff, RX,&ff, RX,&ff,  R6,&bf, R4,&df, R3,&df, RX,&ff, R4,&fe  ; - - -  B N M Sym Space
+ELSE
+    defb    RX,&ff, RX,&ff, RX,&ff,  RX,&ff, RX,&ff, S4,&bf, RX,&ff, RX,&ff  ; F3 F2 F1  V C X Z Shift
+    defb    RX,&ff, RX,&ff, RX,&ff,  RX,&ff, RX,&ff, RX,&ff, RX,&ff, RX,&ff  ; F6 F5 F4  G F D S A
+    defb    RX,&ff, RX,&ff, RX,&ff,  S5,&bf, S2,&df, RX,&ff, S3,&df, S4,&df  ; F9 F8 F7  T R E W Q
+    defb    RX,&ff, RX,&ff, RX,&ff,  R1,&7f, S2,&7f, R2,&7f, S3,&7f, R3,&7f  ; Caps Tab Esc  5 4 3 2 1
+    defb    RX,&ff, RX,&ff, RX,&ff,  S1,&7f, R0,&7f, S0,&7f, S0,&df, RX,&ff  ; DEL + -  6 7 8 9 0
+    defb    RX,&ff, RX,&ff, RX,&ff,  RX,&ff, RX,&ff, RX,&ff, RX,&ff, RX,&ff  ; F0 " =  Y U I O P
+    defb    RX,&ff, RX,&ff, RX,&ff,  R1,&bf, RX,&ff, RX,&ff, R7,&bf, RX,&ff  ; Edit : ;  H J K L Return
+    defb    RX,&ff, RX,&ff, RX,&ff,  RX,&ff, RX,&ff, RX,&ff, RX,&ff, RX,&ff  ; Inv . ,  B N M Sym Space
+ENDIF
+
+;               defs -$\256      ; We should already be aligned, but just in case
+
+vic_key_rows:  defs 9            ; 8 key rows + 1 scratch entry
+
+; LSB of key row to apply mask to
 R0:            equ  vic_key_rows\256
 R1:            equ  R0+1
 R2:            equ  R0+2
@@ -436,17 +424,17 @@ R4:            equ  R0+4
 R5:            equ  R0+5
 R6:            equ  R0+6
 R7:            equ  R0+7
-RX:            equ  R0      ; dead keys
+RX:            equ  R0+8    ; dead keys
 
-keymap:
-    defb    R2,&7f, R4,&7f, R3,&7f,  R4,&f7, R3,&fb, R4,&fb, R3,&fd, R4,&fd  ; F3 F2 F1 V C X Z Shift
-    defb    R5,&7f, R1,&7f, R5,&7f,  R5,&f7, R2,&fb, R5,&fb, R2,&fd, R5,&fd  ; F6 F5 F4 G F D S A
-    defb    R0,&bf, R4,&7f, R0,&7f,  R1,&fb, R6,&fb, R1,&fd, R6,&fd, R1,&fe  ; F9 F8 F7 T R E W Q
-    defb    RX,&ff, R5,&fe, R4,&fe,  R7,&fb, R0,&fd, R7,&fd, R0,&fe, R7,&fe  ; Caps Tab Esc 5 4 3 2 1
-    defb    R7,&7f, R7,&df, R0,&df,  R0,&fb, R7,&f7, R0,&f7, R7,&ef, R0,&ef  ; DEL + - 6 7 8 9 0
-    defb    RX,&ff, R0,&fe, R2,&bf,  R6,&f7, R1,&f7, R6,&ef, R1,&ef, R6,&df  ; F0 " = Y U I O P
-    defb    R3,&bf, R2,&df, R5,&bf,  R2,&f7, R5,&ef, R2,&ef, R5,&df, R6,&7f  ; Edit : ; H J K L Return
-    defb    R2,&fe, R3,&df, R4,&df,  R3,&f7, R4,&ef, R3,&ef, RX,&ff, R3,&fe  ; Inv . , B N M Sym Space
+; Same as above, but toggles VIC shift state
+S0:            equ  R0+&80
+S1:            equ  R1+&80
+S2:            equ  R2+&80
+S3:            equ  R3+&80
+S4:            equ  R4+&80
+S5:            equ  R5+&80
+S6:            equ  R6+&80
+S7:            equ  R7+&80
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -456,11 +444,12 @@ execute_loop:  ld   a,&1a           ; LD A,(DE)
                ld   (main_loop),a   ; restore start of loop
                call main_loop
 
+IF spectrum_mode == 0
                ld   a,&df
                in   a,(status)      ; read extended keys
                rla                  ; check F0
                ret  nc              ; exit to BASIC if pressed
-
+ENDIF
                ld   a,(de)
                cp   &db             ; STP? (CPU halted)
                jr   z,execute_loop
@@ -736,11 +725,18 @@ no_vic_press:  inc  l
 
 write_9122:    bit  7,(hl)
                jr   nz,not_joyb7
+IF spectrum_mode
+               in   a,(kempston)
+               rra
+               ld   a,&ff
+               jr   nc,no_fire
+ELSE
                ld   a,&ff
                in   a,(keyboard)
                bit  4,a             ; Right pressed?
                ld   a,&ff
                jr   nz,no_fire
+ENDIF
                ld   a,&7f
 no_fire:       ld   l,&20
                ld   (hl),a
@@ -757,7 +753,6 @@ write_vic:     ld   a,l
                jp   z,write_9002_3
                cp   &03
                jp   z,write_9002_3
-IF spectrum_mode == 0
                cp   &0a
                jp   z,write_900a
                cp   &0b
@@ -768,7 +763,6 @@ IF spectrum_mode == 0
                jp   z,write_900d
                cp   &0e
                jp   z,write_900e
-ENDIF
                jp   (ix)
 
 write_9002_3:  call build_tables
@@ -907,7 +901,38 @@ bord_end_loop: ld   (hl),e
 
 
 write_900A:    push bc              ; bass voice
-               ld   bc,saa
+IF spectrum_mode
+               ld   l,(hl)
+               ld   bc,ay_reg
+               ld   a,&07
+               out  (c),a
+               res  6,b
+               ld   a,(voice_enable)
+               or   %00000001       ; disable tone A
+               bit  7,l             ; VIC voice disabled?
+               jr   z,bass_off
+               and  %11111110       ; enable tone A
+bass_off:      ld   (voice_enable),a
+               out  (c),a
+               set  6,b
+               ld   h,sound_table/256
+               ld   a,(hl)
+               res  7,l
+               ld   h,(hl)
+               ld   l,a
+               add  hl,hl
+               add  hl,hl           ; bass is 2 octaves below soprano
+               ld   a,&00
+               out  (c),a
+               res  6,b
+               out  (c),l
+               set  6,b
+               inc  a
+               out  (c),a
+               res  6,b
+               out  (c),h
+ELSE
+               ld   bc,saa_reg
                ld   a,&14
                out  (c),a
                dec  b
@@ -940,12 +965,42 @@ write_900A:    push bc              ; bass voice
                res  7,l
                ld   a,(hl)
                out  (c),a
-
+ENDIF
                pop  bc
                jp   (ix)
 
 write_900B:    push bc              ; alto voice
-               ld   bc,saa
+IF spectrum_mode
+               ld   l,(hl)
+               ld   bc,ay_reg
+               ld   a,&07
+               out  (c),a
+               res  6,b
+               ld   a,(voice_enable)
+               or   %00000010       ; disable tone B
+               bit  7,l             ; VIC voice disabled?
+               jr   z,alto_off
+               and  %11111101       ; enable tone B
+alto_off:      ld   (voice_enable),a
+               out  (c),a
+               set  6,b
+               ld   h,sound_table/256
+               ld   a,(hl)
+               res  7,l
+               ld   h,(hl)
+               ld   l,a
+               add  hl,hl           ; alto is 1 octave below soprano
+               ld   a,&02
+               out  (c),a
+               res  6,b
+               out  (c),l
+               set  6,b
+               inc  a
+               out  (c),a
+               res  6,b
+               out  (c),h
+ELSE
+               ld   bc,saa_reg
                ld   a,&14
                out  (c),a
                dec  b
@@ -990,12 +1045,41 @@ alto_ok:       add  a,a
                res  7,l
                ld   a,(hl)
                out  (c),a
-
+ENDIF
                pop  bc
                jp   (ix)
 
 write_900C:    push bc              ; soprano voice
-               ld   bc,saa
+IF spectrum_mode
+               ld   l,(hl)
+               ld   bc,ay_reg
+               ld   a,&07
+               out  (c),a
+               res  6,b
+               ld   a,(voice_enable)
+               or   %00000100       ; disable tone C
+               bit  7,l             ; VIC voice disabled?
+               jr   z,soprano_off
+               and  %11111011       ; enable tone C
+soprano_off:   ld   (voice_enable),a
+               out  (c),a
+               set  6,b
+               ld   h,sound_table/256
+               ld   a,(hl)
+               res  7,l
+               ld   h,(hl)
+               ld   l,a
+               ld   a,&04
+               out  (c),a
+               res  6,b
+               out  (c),l
+               set  6,b
+               inc  a
+               out  (c),a
+               res  6,b
+               out  (c),h
+ELSE
+               ld   bc,saa_reg
                ld   a,&14
                out  (c),a
                dec  b
@@ -1037,12 +1121,37 @@ soprano_ok:    ld   b,a
                res  7,l
                ld   a,(hl)
                out  (c),a
-
+ENDIF
                pop  bc
                jp   (ix)
 
 write_900D:    push bc              ; noise register
-               ld   bc,saa
+IF spectrum_mode
+               ld   l,(hl)
+               ld   bc,ay_reg
+               ld   a,&07
+               out  (c),a
+               res  6,b
+               ld   a,(voice_enable)
+               or   %00001000       ; disable noise A
+               bit  7,l             ; VIC voice disabled?
+               jr   z,noise_off
+               and  %11110111       ; enable noise A
+noise_off:     ld   (voice_enable),a
+               out  (c),a
+               set  6,b
+               ld   a,l
+               cpl
+               rra
+               rra
+               rra
+               and  %00001111       ; noise freq only 4 bits :-(
+               ld   h,&06
+               out  (c),h
+               res  6,b
+               out  (c),a
+ELSE
+               ld   bc,saa_reg
                ld   a,&15
                out  (c),a
                dec  b
@@ -1083,12 +1192,24 @@ noise_ok:      add  a,a
                res  7,l
                ld   a,(hl)
                out  (c),a
-
+ENDIF
                pop  bc
                jp   (ix)
 
-write_900E:    ld   a,(hl)          ; sound volume
+write_900E:    push bc
+               ld   a,(hl)          ; sound volume
                and  %00001111
+IF spectrum_mode
+               ld   bc,ay_reg
+               ld   h,10
+vol_loop:      out  (c),h
+               res  6,b
+               out  (c),a
+               set  6,b
+               dec  h
+               bit  3,h
+               jr   nz,vol_loop
+ELSE
                ld   l,a
                add  a,a
                add  a,a
@@ -1096,8 +1217,7 @@ write_900E:    ld   a,(hl)          ; sound volume
                add  a,a             ; move to high nibble
                or   l               ; left+right channels
                ld   h,0
-               push bc
-               ld   bc,saa
+               ld   bc,saa_reg
 vol_loop:      out  (c),h           ; select channel 'h' volume
                dec  b
                out  (c),a           ; volume value from above
@@ -1105,15 +1225,24 @@ vol_loop:      out  (c),h           ; select channel 'h' volume
                inc  h
                bit  2,h
                jp   z,vol_loop      ; loop for channels 0-3
+ENDIF
                pop  bc
                jp   (ix)
 
 
 init_sound:
 IF spectrum_mode
-               ret                  ; no AY support yet
+               ld   bc,ay_reg
+
+               ld   a,&07
+               out  (c),a
+               res  6,b
+               ld   a,&3f
+               out  (c),a
+               ld   (voice_enable),a
+               ret
 ENDIF
-               ld   bc,saa
+               ld   bc,saa_reg
 
                ld  a,28
                out (c),a
@@ -1140,9 +1269,13 @@ ENDIF
                out  (c),a
                ret
 
+IF spectrum_mode
+voice_enable:  defb &3f     ; noise/tone enable (inverted)
+ELSE
 tone_enable:   defb 0       ; tone enable bit mask
 oct_ab:        defb 0       ; octaves for voices 0+1
 oct_cd:        defb 0       ; octaves for voices 2+3
+ENDIF
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -1380,13 +1513,18 @@ msb_table:     defb op_00>>8, op_01>>8, op_02>>8, op_03>>8, op_04>>8, op_05>>8, 
                defb op_f8>>8, op_f9>>8, op_fa>>8, op_fb>>8, op_fc>>8, op_fd>>8, op_fe>>8, op_ff>>8
 
 
-sound_table:   MDAT "sound.dat"
+IF spectrum_mode
+sound_table:   MDAT "ay38912.dat"
+ELSE
+sound_table:   MDAT "saa1099.dat"
+ENDIF
 
                defs -$\256
 
+IF spectrum_mode
                ; VIC to Spectrum colours, with bright in b3
 zx_colours:    defb &0,&7,&2,&5,&3,&4,&1,&6,&6,&E,&A,&D,&B,&C,&9,&E
-
+ENDIF
 
 end:           equ  $
 end_len:       equ  end-start
