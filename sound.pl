@@ -31,7 +31,7 @@ open FILE, ">saa1099.dat" and binmode FILE or die "$!\n";
 
 $notes = $octaves = '';
 
-# Loop over sound values from 0 to 127, for voice 0
+# Loop over sound values from 0 to 127, for the bass voice
 for ($n = 0 ; $n <= 127 ; $n++)
 {
     my $f = $bass / (127 - (($n == 127) ? -1 : $n));
@@ -52,7 +52,7 @@ open FILE, ">ay38912.dat" and binmode FILE or die "$!\n";
 
 $fine = $coarse = '';
 
-# Loop over sound values from 0 to 127, for voice 0
+# Loop over sound values from 0 to 127, for the soprano voice
 for ($n = 0 ; $n <= 127 ; $n++)
 {
     # Determine the AY note value
