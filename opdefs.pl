@@ -22,6 +22,7 @@ if ($?)
         printf FILE "op_%02x: equ &b000\n", $_;
     }
 
+    print "Assembly error, creating dummy definitions!\n";
     exit;
 }
 
