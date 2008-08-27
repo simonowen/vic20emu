@@ -1,5 +1,9 @@
-VIC-20 Emulator v1.1
+VIC-20 Emulator v1.2
 --------------------
+
+Version 1.2 (27/8/2008)
+- Fixed TRB testing wrong register (Dr Beep)
+- BIT #imm now only affects Z flag (Jimmy)
 
 Version 1.1 (23/8/2008)
 - Added pipe and underscore key symbols

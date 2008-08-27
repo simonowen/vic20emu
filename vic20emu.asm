@@ -1,6 +1,6 @@
 ; VIC-20 emulator for SAM Coupe and ZX Spectrum, by Simon Owen
 ;
-; Version 1.1 (23/8/2008)
+; Version 1.2 (27/8/2008)
 ;
 ; WWW: http://simonowen.com/sam/vic20emu/
 
