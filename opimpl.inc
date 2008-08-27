@@ -1844,12 +1844,19 @@ op_7f_len:     equ  $-op_7f
 
 
 
-               org  op_80-1
+               org  op_80
                dump $
-i_bra_ex:      ex   af,af'          ; preseve C before branch
-;              org  op_80
-;              dump $
 i_bra:         ld   a,(de)          ; BRA [65C02]
+               inc  de
+               ld   l,a             ; offset low
+               rla                  ; set carry with sign
+               sbc  a,a             ; form high byte for offset
+               ld   h,a
+               add  hl,de           ; PC=PC+e
+               ex   de,hl
+               jp   (ix) ; main_loop
+i_bra_ex:      ex   af,af'          ; preseve C before branch
+               ld   a,(de)
                inc  de
                ld   l,a             ; offset low
                rla                  ; set carry with sign

@@ -47,9 +47,6 @@ MSB:
         my $start = ($msb << 8) | $op;
         my $end = $start + $len{$op}-1;
 
-        # Special fiddle to allow room for EX AF,AF' before BRA
-        $start-- if $op == 0x80;
-
         # Check against what we've already positioned
         foreach (keys %off)
         {
@@ -71,9 +68,6 @@ MSB:
         next OPCODE;
     }
 }
-
-# Undo fiddle so BRA is positioned as normal
-$off{0x80}++;
 
 # Position base so code finishes just before &c000
 $base = 0xc000 - (($size + 0xff) & ~0xff);
