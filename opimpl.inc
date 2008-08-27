@@ -325,7 +325,7 @@ i_trb_z:       ld   a,(de)          ; TRB $nn [65C02]
                ld   c,(hl)          ; x
                ld   a,b             ; A
                cpl                  ; ~A
-               and  b               ; x&~A
+               and  c               ; x&~A
                ld   (hl),a          ; set mem
                ld   a,c
                and  b               ; x&A
@@ -434,7 +434,7 @@ i_trb_a:       ex   de,hl           ; TRB $nnnn [65C02]
                ld   c,(hl)          ; x
                ld   a,b             ; A
                cpl                  ; ~A
-               and  b               ; x&~A
+               and  c               ; x&~A
                ld   (hl),a          ; set mem
                ld   a,c
                and  b               ; x&A
@@ -556,7 +556,21 @@ i_bit_z:       ld   a,(de)          ; BIT $nn
                inc  de
                ld   l,a
                ld   h,0
-               jp   i_bit
+i_bit:         ld   c,(hl)          ; set N
+               ld   a,c
+               and  %01000000       ; V flag from bit 6 of x
+               exx
+               ld   e,a             ; set V
+               exx
+               ld   a,(de)          ; next instruction
+               and  %11011111
+               cp   &d0             ; BNE or BEQ next?
+               jr   z,bit_z
+               jp   (ix) ; main_loop ; use N flag
+bit_z:         ld   a,b             ; A
+               and  c               ; perform BIT test
+               ld   c,a             ; set Z
+               jp   (ix) ; read_loop
 op_24_len:     equ  $-op_24
 
 
@@ -1940,22 +1954,9 @@ op_88_len:     equ  $-op_88
 
                org  op_89
                dump $
-i_bit_i:       ld   h,d             ; BIT #$nn
-               ld   l,e
+i_bit_i:       ld   a,(de)          ; BIT #$nn
                inc  de
-i_bit:         ld   c,(hl)          ; set N
-               ld   a,c
-               and  %01000000       ; V flag from bit 6 of x
-               exx
-               ld   e,a             ; set V
-               exx
-               ld   a,(de)          ; next instruction
-               and  %11011111
-               cp   &d0             ; BNE or BEQ next?
-               jr   z,bit_z
-               jp   (ix) ; main_loop ; use N flag
-bit_z:         ld   a,b             ; A
-               and  c               ; perform BIT test
+               and  b               ; BIT test against A
                ld   c,a             ; set Z
                jp   (ix) ; read_loop
 op_89_len:     equ  $-op_89
