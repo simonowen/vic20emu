@@ -5,6 +5,13 @@ INC "opdefs.inc"
                org  op_00
                dump $
 i_brk:         inc  de              ; return to BRK+2
+
+               ex   af,af'          ; get C
+               inc  c
+               dec  c               ; set N Z
+               push af              ; save flags for below
+               ex   af,af'          ; save C
+
                ld   a,d             ; PCH
                exx
                ld   (hl),a          ; push return PCH
@@ -14,22 +21,21 @@ i_brk:         inc  de              ; return to BRK+2
                exx
                ld   (hl),a          ; push return PCL
                dec  l               ; S--
-               ex   af,af'          ; carry
-               inc  c
-               dec  c               ; set N Z
-               push af              ; save flags
-               ex   af,af'          ; save carry
-               pop  bc
+
+               pop  bc              ; Z80 flags in C
                ld   a,c
-               and  %10000001       ; keep N and C
-               bit  6,c             ; check Z
+               and  %10000001       ; keep Z80 N and C
+               bit  6,c             ; check Z80 Z
                jr   z,brk_nz
                or   %00000010       ; set Z
 brk_nz:        or   e               ; merge V
-               or   d               ; merge T D I
-               or   %00010000       ; set B
+               or   d               ; merge T B D I
+               or   %00010000       ; set B (stack value only)
                ld   (hl),a          ; push P
                dec  l               ; S--
+
+               res  3,d             ; clear D [65C02]
+               set  2,d             ; set I (disable interrupts)
                exx
                ld   de,(m6502_int)  ; fetch interrupt handler
                jp   (ix) ; main_loop
