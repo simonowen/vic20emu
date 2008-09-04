@@ -1,6 +1,6 @@
 ; VIC-20 emulator for SAM Coupe and ZX Spectrum, by Simon Owen
 ;
-; Version 1.2 (27/8/2008)
+; Version 1.3 (4/9/2008)
 ;
 ; WWW: http://simonowen.com/sam/vic20emu/
 
@@ -70,6 +70,7 @@ ENDIF
 
                call setup_im2       ; enable IM 2
                call init_sound
+               call init_joystick
 
                ei
                call load_state
@@ -206,6 +207,20 @@ read_keyboard: ld   hl,vic_key_rows+7
                dec  l           ; L is now zero for below
                ld   (hl),a
 
+               ; Check for any SAM key press
+               xor  a
+               in   a,(keyboard) ; base keys
+               or   %11100000
+IF spectrum_mode == 0
+               ld   c,a
+               xor  a
+               in   a,(status)  ; extended keys
+               or   %00011111
+               and  c
+ENDIF
+               inc  a
+               ret  z           ; return if nothing pressed
+
                ld   b,&fe
 keyrow_loop:
 IF spectrum_mode == 0
@@ -322,47 +337,105 @@ not_shift:
                ret
 
 
-read_joystick: ld   hl,&911f
-               ld   a,&ff
-               ld   (hl),a          ; nothing pressed
+read_joystick: ld   bc,&ffff        ; no joystick movement
+               ld   h,vic_key_rows/256
+
 IF spectrum_mode
+               ld   a,&fe   ; V C X Z Shift
+               in   a,(keyboard)
+               rra
+               jr   c,not_joy_shift
+               ld   a,&f7   ; 5 4 3 2 1
+               in   a,(keyboard)
+               bit  4,a
+               jr   nz,not_cursor_l
+               ld   l,R4
+               set  1,(hl)  ; release shift
+               ld   l,R7
+               set  2,(hl)  ; release 5
+               res  4,c     ; press left
+not_cursor_l:
+               ld   a,&ef   ; 6 7 8 9 0
+               in   a,(keyboard)
+               bit  4,a
+               jr   nz,not_cursor_d
+               ld   l,R4
+               set  1,(hl)  ; release shift
+               ld   l,R0
+               set  2,(hl)  ; release 6
+               res  3,c     ; press down
+not_cursor_d:
+               bit  3,a
+               jr   nz,not_cursor_u
+               ld   l,R4
+               set  1,(hl)  ; release shift
+               ld   l,R7
+               set  3,(hl)  ; release 7
+               res  2,c     ; press up
+not_cursor_u:
+               bit  2,a
+               jr   nz,not_cursor_r
+               ld   l,R4
+               set  1,(hl)  ; release shift
+               ld   l,R0
+               set  3,(hl)  ; release 8
+               res  7,b     ; press right
+not_cursor_r:
+not_joy_shift:
+
+kempston_ok:   ld   a,&00           ; modified with kempston state
+               and  a
+               jr   z,no_kempston
                in   a,(kempston)    ; Kempston joystick
                rra
-               rra
-               jr   c,joy_b1
-joy_b1_ret:    rra
-               jr   c,joy_b2
-joy_b2_ret:    rra
-               jr   c,joy_b3
-joy_b3_ret:    rra
-               ret  nc
-joy_b4:        res  5,(hl)          ; fire
-               ret
-joy_b3:        res  2,(hl)          ; up
-               jp   joy_b3_ret
-joy_b2:        res  3,(hl)          ; down
-               jp   joy_b2_ret
-joy_b1:        res  4,(hl)          ; left
-               jp   joy_b1_ret
+               jr   c,joy_right
+joy_right_ret: rra
+               jr   c,joy_left
+joy_left_ret:  rra
+               jr   c,joy_down
+joy_down_ret:  rra
+               jr   c,joy_up
+joy_up_ret:    rra
+               jr   c,joy_fire
+no_kempston:
+               ld   a,&7f           ; B N M Sym Space
+               in   a,(keyboard)
+               bit  1,a             ; Sym?
+               jr   z,joy_fire
+joy_fire_ret:
 ELSE
-               in   a,(keyboard)    ; &FFFE (cursor keys)
+               ld   a,&ff
+               in   a,(keyboard)
                rra
-               jr   nc,joy_b0
-joy_b0_ret:    rra
-               jr   nc,joy_b1
-joy_b1_ret:    rra
-               jr   nc,joy_b2
-joy_b2_ret:    rra
-               ret  c
-joy_b3:        res  4,(hl)          ; left
-               ret
-joy_b2:        res  3,(hl)          ; down
-               jp   joy_b2_ret
-joy_b1:        res  2,(hl)          ; up
-               jp   joy_b1_ret
-joy_b0:        res  5,(hl)          ; fire
-               jp   joy_b0_ret
+               jr   nc,joy_fire
+joy_fire_ret:  rra
+               jr   nc,joy_up
+joy_up_ret:    rra
+               jr   nc,joy_down
+joy_down_ret:  rra
+               jr   nc,joy_left
+joy_left_ret:  rra
+               jr   nc,joy_right
+joy_right_ret:
 ENDIF
+               ld   a,c
+               ld   (&911f),a       ; set joystick L/D/U+fire
+               ld   a,b
+               ld   (joy_9120),a    ; save for later
+               ret
+
+joy_up:        res  2,c             ; up
+               jp   joy_up_ret
+joy_down:      res  3,c             ; down
+               jp   joy_down_ret
+joy_left:      res  4,c             ; left
+               jp   joy_left_ret
+joy_right:     res  7,b             ; right
+               jp   joy_right_ret
+joy_fire:      res  5,c             ; fire
+               jp   joy_fire_ret
+
+joy_9120:      defb &ff             ; b7 clear for joystick right
 
 
 ; IM 2 table must be aligned to 256-byte boundary
@@ -473,24 +546,40 @@ nmi_patch:     ld   a,nmi_handler-$-2   ; patched with JR for NMI
                jr   nc,execute_loop ; skip interrupt
 not_scroll:
                ld   hl,(m6502_int)  ; fetch interrupt handler
-do_interrupt:  ld   a,d
+do_interrupt:
+               ex   af,af'          ; get C
+               inc  c
+               dec  c               ; set N Z
+               push af              ; save flags
+               ex   af,af'          ; save C
+
+               ld   a,d             ; PCH
                exx
-               ld   (hl),a          ; push PCH
-               dec  l
+               ld   (hl),a          ; push return PCH
+               dec  l               ; S--
                exx
-               ld   a,e
+               ld   a,e             ; PCL
                exx
-               ld   (hl),a          ; push PCL
-               dec  l
-               res  4,d             ; clear B
+               ld   (hl),a          ; push return PCL
+               dec  l               ; S--
+
+               pop  bc              ; Z80 flags in C
+               ld   a,c
+               and  %10000001       ; keep Z80 N and C
+               bit  6,c             ; check Z80 Z
+               jr   z,int_nz
+               or   %00000010       ; set Z
+int_nz:        or   e               ; merge V
+               or   d               ; merge T B D I
+               and  %11101111       ; clear B (stack value only)
+               ld   (hl),a          ; push P
+               dec  l               ; S--
+
                res  3,d             ; clear D [65C02]
-               exx
-               call i_php           ; push P
-               exx
                set  2,d             ; set I (disable interrupts)
                exx
                ex   de,hl
-               jr   execute_loop
+               jp   execute_loop
 
 nmi_handler:   ld   a,&3e           ; LD A,nn opcode
                ld   (nmi_patch),a
@@ -718,27 +807,15 @@ vic_key_loop:  rl   c
                and  (hl)
 no_vic_press:  inc  l
                djnz vic_key_loop
-               ld   (&9121),a      ; port A
-               ld   (&912f),a      ; port A
+               ld   (&9121),a       ; port A
+               ld   (&912f),a       ; port A
                pop  bc
                jp   (ix)
 
 write_9122:    bit  7,(hl)
                jr   nz,not_joyb7
-IF spectrum_mode
-               in   a,(kempston)
-               rra
-               ld   a,&ff
-               jr   nc,no_fire
-ELSE
-               ld   a,&ff
-               in   a,(keyboard)
-               bit  4,a             ; Right pressed?
-               ld   a,&ff
-               jr   nz,no_fire
-ENDIF
-               ld   a,&7f
-no_fire:       ld   l,&20
+               ld   a,(joy_9120)    ; value from read_joystick
+               ld   l,&20
                ld   (hl),a
 not_joyb7:     jp   (ix)
 
@@ -1270,12 +1347,25 @@ ENDIF
                ret
 
 IF spectrum_mode
-voice_enable:  defb &3f     ; noise/tone enable (inverted)
+voice_enable:  defb &3f             ; noise/tone enable (inverted)
 ELSE
-tone_enable:   defb 0       ; tone enable bit mask
-oct_ab:        defb 0       ; octaves for voices 0+1
-oct_cd:        defb 0       ; octaves for voices 2+3
+tone_enable:   defb 0               ; tone enable bit mask
+oct_ab:        defb 0               ; octaves for voices 0+1
+oct_cd:        defb 0               ; octaves for voices 2+3
 ENDIF
+
+init_joystick:
+IF spectrum_mode
+               ; Check if Kempston interface is connected
+               xor  a
+               ld   bc,kempston     ; MSB==0
+joy_check:     in   e,(c)           ; read joystick
+               or   e               ; merge result
+               djnz joy_check       ; 256 samples
+               cpl
+               ld   (kempston_ok+1),a   ; zero if interface absent
+ENDIF
+               ret
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
