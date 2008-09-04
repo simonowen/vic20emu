@@ -1,5 +1,11 @@
-VIC-20 Emulator v1.2
+VIC-20 Emulator v1.3
 --------------------
+
+Version 1.3 (4/9/2008)
+- Fixed BRK flags (clear D, set I, N/Z set from wrong EXX set)
+- Spectrum cursor keys move joystick, Sym for fire
+- Kempston now only used if interface is present
+- Early key scan exit when no keys pressed
 
 Version 1.2 (27/8/2008)
 - Fixed TRB testing wrong register (Dr Beep)
