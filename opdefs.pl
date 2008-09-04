@@ -6,8 +6,11 @@
 #
 #     http://simonowen.com/sam/vic20emu/
 
+$source = 'vic20emu.asm';
+$codeend = 0xc000;
+
 # Assemble, outputting the symbols containing opcode implementation lengths
-$_ = `pyz80.py -s op_.*_len vic20emu.asm`;
+$_ = `pyz80.py -s op_.*_len $source`;
 
 # Create include file for definitions
 my $outfile = 'opdefs.inc';
@@ -19,7 +22,7 @@ if ($?)
 {
     # Create dummy offset list to allow lengths to be calculated
     for (0..255) {
-        printf FILE "op_%02x: equ &b000\n", $_;
+        printf FILE "op_%02x: equ &%04x\n", $_, $codeend-0x1000;
     }
 
     print "Assembly error, creating dummy definitions!\n";
@@ -69,8 +72,8 @@ MSB:
     }
 }
 
-# Position base so code finishes just before &c000
-$base = 0xc000 - (($size + 0xff) & ~0xff);
+# Position base so code finishes at the required point
+$base = $codeend - (($size + 0xff) & ~0xff);
 
 print "Size = $size, used = $used, slack = ", $size-$used, "\n";
 
