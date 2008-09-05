@@ -1,4 +1,7 @@
 ; 65C02 instruction implementations
+;
+; NOTE: If you change this file, opdefs.inc must be rebuilt by running
+; opdefs.pl (requires the pyz80 assembler)
 
 INC "opdefs.inc"
 
