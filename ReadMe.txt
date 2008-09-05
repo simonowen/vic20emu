@@ -1,5 +1,9 @@
-VIC-20 Emulator v1.3
---------------------
+VIC-20 Emulator for SAM Coupe and Spectrum (v1.3)
+-------------------------------------------------
+
+See website for usage: http://simonowen.com/sam/vic20emu/
+
+---
 
 Version 1.3 (4/9/2008)
 - Fixed BRK flags (clear D, set I, N/Z set from wrong EXX set)
@@ -18,6 +22,7 @@ Version 1.1 (23/8/2008)
 Version 1.0 (19/8/2008)
 - Initial Release
 
+---
 
-Written by Simon Owen
-http://simonowen.com/sam/vic20emu/
+Simon Owen
+simon@simonowen.com
